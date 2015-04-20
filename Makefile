@@ -1,6 +1,6 @@
 CC = gcc
-FTPC = ftpc.c
-FTPS = ftps.c
+FTPC = ftpc.c common.c
+FTPS = ftps.c common.c
 #TCPDC = tcpdc.c
 #TCPDS = tcpds.c
 CFLAGS = -Wall

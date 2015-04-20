@@ -23,6 +23,8 @@
 #define TCPD_MSS 1000
 #define TCPDC_PORT 4567
 #define TCPDS_PORT 4567
+#define SOCK_TYPE_STREAM 0
+#define SOCK_TYPE_DGRAM 1
 
 //Header exchange
 typedef struct header_msg {
@@ -56,3 +58,18 @@ typedef struct tcpd_packet {
     char buf[TCPD_MSS];
     char checksum[TCPD_CRC_LENGTH];
 } tcpd_packet_t;
+
+int setup_addr(int sock_type, char *node_name, char *port_num_str, struct addrinfo **ret_addr);
+
+int setup_client_cxn(struct addrinfo *addr);
+int setup_server_cxn(struct addrinfo *addr, int *remote_socket, char *remote_node_name);
+
+int free_addresses();
+int free_sockets();
+
+int send_header(int sending_socket, header_msg_t my_file_header);
+header_msg_t recv_header(int remote_socket);
+
+int send_file(int sending_socket, header_msg_t my_file_header, int my_file_fd);
+int create_client_file(char *remote_node_name, header_msg_t remote_file_header);
+int recv_file(int remote_socket, int remote_file_fd, header_msg_t remote_file_header);

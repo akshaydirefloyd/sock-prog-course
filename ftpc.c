@@ -17,19 +17,9 @@ int main(int argc, char **argv)
     char node_name[REMOTE_HOST_STR_MAX_LEN];
     char port_num_str[PORT_NUM_STR_MAX_LEN];
     char local_file_name[LOCAL_FILE_NAME_MAX_LEN];
-    char ip_addr_str[128];
-    struct sockaddr_in *ip_sock_addr;
-    struct addrinfo *res, *res_ptr_iter, hints;
-    char send_buf[SEND_BUF_SZ];
-    int buf_seg_sz = SEND_BUF_SZ / 4;
-    int total_buf_len = 0;
-    int buf_len_sent = 0;
-    int buf_len_read = 0;
-    int send_out = -1;
+    struct addrinfo *server_addr;
     header_msg_t my_file_header;
     int my_file_fd = -1;
-    off_t file_offset = 0;
-    ssize_t file_size_offset = -1;
     struct stat my_file_stats;
     
     //Usage sanity
@@ -76,116 +66,25 @@ int main(int argc, char **argv)
 	}
     }
     
-    //get own hostname and address structure related to it
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_INET;   //Need IPV4
-    hints.ai_socktype = SOCK_STREAM; //Need TCP sockets
-
-    if (0 != getaddrinfo(node_name, port_num_str, &hints, &res)) {
-	fprintf(stderr, "Error in getaddrinfo: %s\n", strerror(errno));
-	exit(-1);
-    }
-
-    //Go through valid address list and pick out first match
-    //The following iteration isn't really necessary
-    for (res_ptr_iter = res; res_ptr_iter != NULL; 
-	 res_ptr_iter = res_ptr_iter->ai_next) {
-	if ((res_ptr_iter->ai_family == AF_INET) && 
-	    (res_ptr_iter->ai_socktype == SOCK_STREAM)) {
-	    ip_sock_addr = (struct sockaddr_in *) res_ptr_iter->ai_addr;
-	    if (NULL == inet_ntop(res_ptr_iter->ai_family, &(ip_sock_addr->sin_addr), 
-				  ip_addr_str, sizeof(ip_addr_str))) {
-		fprintf(stderr, "Error in inet_ntop : %s\n", strerror(errno));
-	    }
-	    fprintf(stderr, "Obtained address for %s = %s\n", node_name, ip_addr_str);
-	    break;
-	}
-    }
-
+    //get server hostname and address structure related to it
+    setup_addr(SOCK_TYPE_STREAM, node_name, port_num_str, &server_addr);
 
     //Client creates a socket and attempts to connect
-    sending_socket = socket(res_ptr_iter->ai_family, res_ptr_iter->ai_socktype, 
-			      res_ptr_iter->ai_protocol);
-    if (-1 == sending_socket) {
-	fprintf(stderr, "Error in socket creation:%s\n", strerror(errno));
-	exit(-1);
-    }
-
-    /*
-    if (-1 == bind(sending_socket, res_ptr_iter->ai_addr, 
-		   res_ptr_iter->ai_addrlen)) {
-	fprintf(stderr, "Error in bind:%s\n", strerror(errno));
-	exit(-1);
-    }
-    */
-    
-    if (-1 == connect(sending_socket, res_ptr_iter->ai_addr, 
-		      res_ptr_iter->ai_addrlen)) {
-	fprintf(stderr, "Error in connect:%s\n", strerror(errno));
-	exit(-1);
-    }
-    else {
-	fprintf(stderr, "Connected to %s\n", node_name);
-    }
+    sending_socket = setup_client_cxn(server_addr);
 
     //Exchange header information
-    total_buf_len = sizeof(header_msg_t);
-    buf_len_sent = 0;
-    while (buf_len_sent < total_buf_len) {
-	buf_seg_sz = (buf_seg_sz > (total_buf_len - buf_len_sent)) ?
-	    buf_seg_sz : (total_buf_len - buf_len_sent);
-	send_out = send(sending_socket, (void *)((char *)&my_file_header + buf_len_sent), buf_seg_sz, 0);
-	if (-1 == send_out) {
-	    fprintf(stderr, "Error in send:%s\n", strerror(errno));
-	    exit(-1);
-	}
-	buf_len_sent += send_out;
-	fprintf(stderr, "sent %d bytes\n", send_out);
-    }
-    fprintf(stderr, "header exchange done\n");
-    
-    //Initialize some data and then send it
+    send_header(sending_socket, my_file_header);
 
-    buf_seg_sz = SEND_BUF_SZ / 4;
-    total_buf_len = my_file_header.file_size;
-
-    //for (buf_len_sent = 0; buf_len_sent < total_buf_len; buf_len_sent++) {
-    //	send_buf[buf_len_sent] = 'a';
-    //}
-    
-    buf_len_sent = 0;
-    while (buf_len_sent < total_buf_len) {
-	buf_seg_sz = (buf_seg_sz > (total_buf_len - buf_len_sent)) ?
-	    (total_buf_len - buf_len_sent) : buf_seg_sz;
-	buf_len_read = 0;
-	//Make sure that all of buf_seg_sz data has been read into the send buf
-	while (buf_len_read < buf_seg_sz) {
-	    file_size_offset = read(my_file_fd, (void *)((char *)send_buf + buf_len_read), (buf_seg_sz - buf_len_read));
-	    if (-1 == file_size_offset) {
-		fprintf(stderr, "Error in read(%s)\n", strerror(errno));
-		exit(-1);
-	    }
-	    buf_len_read += file_size_offset;
-	    fprintf(stderr, "Done reading %d bytes (%d, %d)\n", (int) file_size_offset, buf_seg_sz, buf_len_read);
-	}
-	//send_out = send(sending_socket, (void *)((char *)send_buf + buf_len_sent), buf_seg_sz, 0);
-	send_out = send(sending_socket, (void *)((char *)send_buf), buf_seg_sz, 0);
-	if (-1 == send_out) {
-	    fprintf(stderr, "Error in send:%s\n", strerror(errno));
-	    exit(-1);
-	}
-	buf_len_sent += send_out;
-	fprintf(stderr, "sent %d bytes\n", send_out);
-    }
+    //Send file
+    send_file(sending_socket, my_file_header, my_file_fd);
     
     //Free resources
     if (-1 != my_file_fd) {
 	close(my_file_fd);
     }
-    if (-1 != sending_socket) {
-	close(sending_socket);
-    }
-    freeaddrinfo(res);
+
+    free_sockets();
+    free_addresses();
     
     return 0;
 }
