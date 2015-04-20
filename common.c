@@ -18,7 +18,7 @@ int setup_addr(int sock_type, char *node_name, char *port_num_str, struct addrin
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET;   //Need IPV4
     hints.ai_flags = AI_PASSIVE; //Free to choose any of the local interfaces
-    if (sock_type == SOCK_TYPE_DGRAM) {
+    if (sock_type == SOCK_TYPE_STREAM) {
 	hints.ai_socktype = SOCK_STREAM; //Need TCP sockets
     }
     else {
