@@ -65,6 +65,9 @@ int main(int argc, char **argv)
 		    my_file_header.file_size);
 	}
     }
+
+    //initialize some basic things
+    init_all();
     
     //get server hostname and address structure related to it
     setup_addr(SOCK_TYPE_STREAM, node_name, port_num_str, &server_addr);

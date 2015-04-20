@@ -73,3 +73,4 @@ header_msg_t recv_header(int remote_socket);
 int send_file(int sending_socket, header_msg_t my_file_header, int my_file_fd);
 int create_client_file(char *remote_node_name, header_msg_t remote_file_header);
 int recv_file(int remote_socket, int remote_file_fd, header_msg_t remote_file_header);
+int init_all();

@@ -40,6 +40,9 @@ int main(int argc, char **argv)
 	    }
 	}
     }
+
+    //initialize some basic things
+    init_all();
     
     //get own hostname and address structure related to it
     setup_addr(SOCK_TYPE_STREAM, NULL, port_num_str, &server_addr);

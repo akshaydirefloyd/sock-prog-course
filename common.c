@@ -9,6 +9,12 @@ int sock_list[MAX_SOCK_LIST];
 int addr_list_count = 0;
 int sock_list_count = 0;
 
+int init_all()
+{
+    //initialize some basic things
+    init_socks_api();
+}
+
 // Setup address for either server or client
 int setup_addr(int sock_type, char *node_name, char *port_num_str, struct addrinfo **ret_addr)
 {
