@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <fcntl.h>
 #define PORT_NUM_STR_MAX_LEN 256
 #define REMOTE_HOST_STR_MAX_LEN 512

@@ -11,8 +11,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-int use_tcpd = 0;
-
 int SOCKET(int domain, int type, int protocol);
 int BIND(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int ACCEPT(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
