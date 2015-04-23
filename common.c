@@ -13,6 +13,7 @@ int init_all()
 {
     //initialize some basic things
     init_socks_api();
+    return 0;
 }
 
 // Setup address for either server or client
@@ -96,7 +97,7 @@ int setup_client_cxn(struct addrinfo *addr)
 {
     int sending_socket = -1;
     
-    sending_socket = socket(addr->ai_family, addr->ai_socktype, 
+    sending_socket = SOCKET(addr->ai_family, addr->ai_socktype, 
 			      addr->ai_protocol);
     if (-1 == sending_socket) {
 	fprintf(stderr, "Error in socket creation:%s\n", strerror(errno));
@@ -104,14 +105,14 @@ int setup_client_cxn(struct addrinfo *addr)
     }
 
     /*
-    if (-1 == bind(sending_socket, addr->ai_addr, 
+    if (-1 == BIND(sending_socket, addr->ai_addr, 
 		   addr->ai_addrlen)) {
 	fprintf(stderr, "Error in bind:%s\n", strerror(errno));
 	exit(-1);
     }
     */
     
-    if (-1 == connect(sending_socket, addr->ai_addr, 
+    if (-1 == CONNECT(sending_socket, addr->ai_addr, 
 		      addr->ai_addrlen)) {
 	fprintf(stderr, "Error in connect:%s\n", strerror(errno));
 	exit(-1);
@@ -139,25 +140,25 @@ int setup_server_cxn(struct addrinfo *addr, int *remote_socket, char *remote_nod
     
     char remote_port_num[PORT_NUM_STR_MAX_LEN];
     
-    listening_socket = socket(addr->ai_family, addr->ai_socktype, 
+    listening_socket = SOCKET(addr->ai_family, addr->ai_socktype, 
 			      addr->ai_protocol);
     if (-1 == listening_socket) {
 	fprintf(stderr, "Error in socket creation:%s\n", strerror(errno));
 	exit(-1);
     }
 
-    if (-1 == bind(listening_socket, addr->ai_addr, 
+    if (-1 == BIND(listening_socket, addr->ai_addr, 
 		   addr->ai_addrlen)) {
 	fprintf(stderr, "Error in bind:%s\n", strerror(errno));
 	exit(-1);
     }
 
-    if (-1 == listen(listening_socket, backlog)) {
+    if (-1 == LISTEN(listening_socket, backlog)) {
 	fprintf(stderr, "Error in listen:%s\n", strerror(errno));
 	exit(-1);
     }
 
-    *remote_socket = accept(listening_socket, (struct sockaddr *)&remote_addr, 
+    *remote_socket = ACCEPT(listening_socket, (struct sockaddr *)&remote_addr, 
 			   &remote_addr_len);
     if (-1 == *remote_socket) {
 	fprintf(stderr, "Error in accept:%s\n", strerror(errno));
@@ -193,7 +194,7 @@ int free_sockets()
 {
     while (0 != sock_list_count) {
 	sock_list_count--;
-	close(sock_list[sock_list_count]);
+	CLOSE(sock_list[sock_list_count]);
     }
     return 0;
 }
@@ -208,10 +209,14 @@ int send_header(int sending_socket, header_msg_t my_file_header)
     
     total_buf_len = sizeof(header_msg_t);
     buf_len_sent = 0;
+    fprintf(stderr, "send_header() sending (%s, %d)\n", my_file_header.file_name,
+	    my_file_header.file_size);
     while (buf_len_sent < total_buf_len) {
 	buf_seg_sz = (buf_seg_sz > (total_buf_len - buf_len_sent)) ?
-	    buf_seg_sz : (total_buf_len - buf_len_sent);
-	send_out = send(sending_socket, (void *)((char *)&my_file_header + buf_len_sent), buf_seg_sz, 0);
+	    (total_buf_len - buf_len_sent) : buf_seg_sz;
+	fprintf(stderr, "send_header() buf_seg_sz = %d\n", buf_seg_sz);
+	send_out = SEND(sending_socket, (void *)((char *)&my_file_header + buf_len_sent), buf_seg_sz, 0);
+	fprintf(stderr, "send_header() = %d bytes\n", buf_seg_sz);
 	if (-1 == send_out) {
 	    fprintf(stderr, "Error in send:%s\n", strerror(errno));
 	    exit(-1);
@@ -237,8 +242,8 @@ header_msg_t recv_header(int remote_socket)
     
     while (buf_len_recvd < total_buf_len) {
 	buf_seg_sz = (buf_seg_sz >= (total_buf_len - buf_len_recvd)) ? 
-	    buf_seg_sz : (total_buf_len - buf_len_recvd);
-	recv_out = recv(remote_socket, (void *)((char *)&remote_file_header + buf_len_recvd), buf_seg_sz, 0);
+	    (total_buf_len - buf_len_recvd) : buf_seg_sz;
+	recv_out = RECV(remote_socket, (void *)((char *)&remote_file_header + buf_len_recvd), buf_seg_sz, 0);
 	if (-1 == recv_out) {
 	    fprintf(stderr, "Error in recv:%s\n", strerror(errno));
 	    exit(-1);
@@ -246,6 +251,8 @@ header_msg_t recv_header(int remote_socket)
 	buf_len_recvd += recv_out;
 	fprintf(stderr, "received %d bytes\n", recv_out);
     }
+    fprintf(stderr, "remote header (%s, %d)\n", remote_file_header.file_name,
+	    remote_file_header.file_size);
     return remote_file_header;
 }
 
@@ -266,7 +273,7 @@ int send_file(int sending_socket, header_msg_t my_file_header, int my_file_fd)
     
     buf_len_sent = 0;
     while (buf_len_sent < total_buf_len) {
-	buf_seg_sz = (buf_seg_sz > (total_buf_len - buf_len_sent)) ?
+	buf_seg_sz = (buf_seg_sz >= (total_buf_len - buf_len_sent)) ?
 	    (total_buf_len - buf_len_sent) : buf_seg_sz;
 	buf_len_read = 0;
 	//Make sure that all of buf_seg_sz data has been read into the send buf
@@ -279,8 +286,8 @@ int send_file(int sending_socket, header_msg_t my_file_header, int my_file_fd)
 	    buf_len_read += file_size_offset;
 	    fprintf(stderr, "Done reading %d bytes (%d, %d)\n", (int) file_size_offset, buf_seg_sz, buf_len_read);
 	}
-	//send_out = send(sending_socket, (void *)((char *)send_buf + buf_len_sent), buf_seg_sz, 0);
-	send_out = send(sending_socket, (void *)((char *)send_buf), buf_seg_sz, 0);
+	//send_out = SEND(sending_socket, (void *)((char *)send_buf + buf_len_sent), buf_seg_sz, 0);
+	send_out = SEND(sending_socket, (void *)((char *)send_buf), buf_seg_sz, 0);
 	if (-1 == send_out) {
 	    fprintf(stderr, "Error in send:%s\n", strerror(errno));
 	    exit(-1);
@@ -310,8 +317,9 @@ int recv_file(int remote_socket, int remote_file_fd, header_msg_t remote_file_he
     while (buf_len_recvd < total_buf_len) {
 	buf_seg_sz = (buf_seg_sz >= (total_buf_len - buf_len_recvd)) ? 
 	    (total_buf_len - buf_len_recvd) : buf_seg_sz;
-	//recv_out = recv(remote_socket, (void *)((char *)recv_buf + buf_len_recvd), buf_seg_sz, 0);
-	recv_out = recv(remote_socket, (void *)((char *)recv_buf), buf_seg_sz, 0);
+	//recv_out = RECV(remote_socket, (void *)((char *)recv_buf + buf_len_recvd), buf_seg_sz, 0);
+	fprintf(stderr, "recv_file() buf_seg_sz = %d\n", buf_seg_sz);
+	recv_out = RECV(remote_socket, (void *)((char *)recv_buf), buf_seg_sz, 0);
 	if (-1 == recv_out) {
 	    fprintf(stderr, "Error in recv:%s\n", strerror(errno));
 	    exit(-1);

@@ -19,3 +19,6 @@ ssize_t SEND(int sockfd, const void *buf, size_t len, int flags);
 ssize_t RECV(int sockfd, void *buf, size_t len, int flags);
 int LISTEN(int sockfd, int backlog);
 int CLOSE(int fd);
+int init_socks_api();
+
+//int tcpd_sock = -1;

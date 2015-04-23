@@ -21,6 +21,7 @@ int main(int argc, char **argv)
     header_msg_t my_file_header;
     int my_file_fd = -1;
     struct stat my_file_stats;
+
     
     //Usage sanity
     if (argc < 4) {
