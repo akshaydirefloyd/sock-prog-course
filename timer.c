@@ -574,6 +574,7 @@ int main(int argc, char **argv)
 		// parse payload (seq_no)
 		temp_int = (int *)incoming_pkt->payload;
 		seq_no = temp_int[0];
+		fprintf(stderr, "request to delete node %d\n", seq_no);
 		free_node(seq_no);
 		break;
 	    default:

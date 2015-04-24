@@ -484,7 +484,9 @@ int main(int argc, char **argv)
 	    char *temp_buf = NULL;
 	    int rlen;
 	    trans_pkt_t *incoming_pkt;
+	    trans_pkt_t temp_pkt;
 	    trans_pkt_t ack_pkt;
+	    trans_pkt_t *timer_pkt = &temp_pkt;
 	    //int timeout_seq = -1;
 	    int temp_int;
 	    //int rtt = 1000;
@@ -499,6 +501,12 @@ int main(int argc, char **argv)
 	    case PKT_TYPE_ACK_TCPD2TCPD:
 		memcpy(&temp_int, incoming_pkt->payload, sizeof(int));
 		fprintf(stderr, "Ack packet (for seq = %d) from TCPD has arrived\n", temp_int);
+		timer_pkt->type = PKT_TYPE_DELNODE_TCPD2TIMER;
+		temp_int--;
+		memcpy(timer_pkt->payload, &temp_int, sizeof(int));
+		fprintf(stderr, "Deleting node number(%d)\n", temp_int);
+		forward_message(sock, (struct sockaddr *)timer_addr,
+				timer_pkt, sizeof(trans_pkt_t), 0);
 		break;
 //	    case PKT_TYPE_CONNECT_TCPD2FTP:
 //		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
