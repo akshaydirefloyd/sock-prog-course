@@ -155,16 +155,16 @@ ssize_t SEND(int sockfd, const void *buf, size_t len, int flags)
 	send_pkt.len = len;
 	memcpy((void *)((char *)send_pkt.payload), (void *)((char *)buf), len);
 	if (len == 4) {
-	    fprintf(stderr, "SEND(4) %d\n", (int) *(send_pkt.payload));
+	    //fprintf(stderr, "SEND(4) %d\n", (int) *(send_pkt.payload));
 	    send_pkt.seq_no = 4;
 	}
 	if (len == 128) {
 	    send_pkt.seq_no = 128;
 	    char temp_name[128];
 	    memcpy(temp_name, buf, len);
-	    fprintf(stderr, "buf = %s\n", temp_name);
+	    //fprintf(stderr, "buf = %s\n", temp_name);
 	    memcpy(temp_name, send_pkt.payload, len);
-	    fprintf(stderr, "payload = %s\n", temp_name);
+	    //fprintf(stderr, "payload = %s\n", temp_name);
 	}
 	// tcpd always packs in more so need to subtract overhead
 	rlen = send_to_tcpd(sockfd, (char *)&send_pkt, sizeof(trans_pkt_t), tcpd_addr, flags);

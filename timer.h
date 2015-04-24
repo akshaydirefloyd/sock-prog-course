@@ -12,11 +12,9 @@
 #include <sys/time.h>
 #include <fcntl.h>
 
+#define STDIN 0
 #define SOCK_TYPE_STREAM 0
 #define SOCK_TYPE_DGRAM 1
-#define MAX_ADDR_LIST 32
-#define STDIN 0
-#define MAX_FDS 32
 #define MAX_BUF_SZ 512
 #define PKT_TYPE_CONNECT_FTP2TCPD 1
 #define PKT_TYPE_SEND_FTP2TCPD 2
@@ -27,21 +25,11 @@
 #define PKT_TYPE_ADDNODE_TCPD2TIMER 7
 #define PKT_TYPE_DELNODE_TCPD2TIMER 8
 #define PKT_TYPE_TIMEOUT_TIMER2TCPD 9
-#define MAX_SEQ_NUM 65535
-#define TCPD_POOL_SZ 32
-#define TCPD_WINDOW_SZ 32
-static int fd_list[MAX_FDS];
-static int fd_list_count = 0;
+#define PKT_TYPE_LOOPBACK_TIMER2TIMER 10
+#define DELTA_LENGTH 64 // Doesn't have to be greater than window size
 
-struct addrinfo **tcpd_addr_list;
-int tcpd_addr_list_count = 0;
-int current_seq_no = 0;
-int next_expected_seq_no = 0;
-int tcpd_window_head_index = 0;
-int tcpd_window_tail_index = 0;
-int tcpd_window_current_size = 0;
-struct timeval round_trip_time;
-int ack_not_received = 1;
+struct addrinfo	*res = NULL;
+struct addrinfo	*res_lb = NULL;
 
 typedef struct trans_pkt {
     struct sockaddr addr;
@@ -51,13 +39,19 @@ typedef struct trans_pkt {
     int seq_no;
 } trans_pkt_t;
 
-trans_pkt_t buffer_pkt_pool[TCPD_POOL_SZ];
+typedef struct timeout_node {
+    int seq_no;
+    int timeout_duration;
+    int index;
+    struct timeval start_time;
+    struct timeout_node *next;
+    struct timeout_node *prev;
+} timeout_node_t;
 
-int setup_tcpd_addr(int sock_type, char *node_name,
-		    char *port_num_str, struct addrinfo **ret_addr);
-int get_tcpd_sock(struct addrinfo *addr);
-int free_fds();
-int free_tcpd_addresses();
-int setup_tcpd_buffers();
-int get_free_buffer_index();
-int release_buffer();
+timeout_node_t *delta_list = NULL;
+timeout_node_t *delta_list_head_used = NULL;
+timeout_node_t *delta_list_tail_used = NULL;
+timeout_node_t *delta_list_head_free = NULL;
+timeout_node_t *delta_list_tail_free = NULL;
+int free_list_count = DELTA_LENGTH;
+int used_list_count = 0;

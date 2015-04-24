@@ -1,5 +1,35 @@
 #include "tcpd.h"
 
+// Initialize wrap-around buffers
+int setup_tcpd_buffers()
+{
+    tcpd_window_head_index = 0;
+    tcpd_window_tail_index = 0;
+    tcpd_window_current_size = 0;
+    return 0;
+}
+
+int get_free_buffer_index()
+{
+    int rval = tcpd_window_head_index;
+    if  (tcpd_window_current_size== TCPD_POOL_SZ) {
+	fprintf(stderr, "TCPD buffers full - need to wait for some buffers to free up\n");
+    }
+    tcpd_window_head_index = (tcpd_window_head_index + 1) % TCPD_POOL_SZ;
+    tcpd_window_current_size++;
+    return rval;
+}
+
+int release_buffer(int index)
+{
+    // verify what we're trying to release is in fact the one at the tail
+    if (index != tcpd_window_tail_index) {
+	fprintf(stderr, "Tail = %d, release_buffer index = %d", index, tcpd_window_tail_index);
+    }
+    tcpd_window_tail_index = (tcpd_window_tail_index + 1) % TCPD_POOL_SZ;
+    tcpd_window_current_size--;
+    return 0;
+}
 
 // Free all initiated addrinfo structures
 int free_tcpd_addresses()
@@ -228,9 +258,10 @@ int main(int argc, char **argv)
     }
 
     setup_tcpd_addr(SOCK_TYPE_DGRAM, NULL, port_num_str, &tcpd_addr);
+    //setup_tcpd_buffers();
     sock = get_tcpd_sock(tcpd_addr);
     
-    tv.tv_sec = 40;
+    tv.tv_sec = 400000;
     tv.tv_usec = 0;
 
     while(1) {
@@ -286,11 +317,14 @@ int main(int argc, char **argv)
 	}
 	else if (FD_ISSET(sock, readfds)) {
 	    struct sockaddr temp_addr;
-	    char *temp_buf;
+	    char *temp_buf = NULL;
 	    int rlen;
 	    trans_pkt_t *incoming_pkt;
+	    //int buffer_index;
 	    struct sockaddr_in forward_addr;
 	    temp_buf = (char *) malloc(sizeof(trans_pkt_t));
+	    //buffer_index = get_free_buffer_index();
+	    //temp_buf = &(buffer_pkt_pool[buffer_index]);
 	    rlen = recv_message(sock, temp_buf, sizeof(trans_pkt_t), 0, &temp_addr);
 	    //fprintf(stderr, "recved %d bytes = %s\n", rlen, temp_buf);
 	    incoming_pkt = (trans_pkt_t *) temp_buf;
@@ -300,29 +334,46 @@ int main(int argc, char **argv)
 		memcpy(&forward_addr, &(incoming_pkt->addr), sizeof(struct sockaddr));
 		memcpy((incoming_pkt->payload), &temp_addr, sizeof(struct sockaddr));
 		incoming_pkt->type = PKT_TYPE_CONNECT_TCPD2TCPD;
+		//changing the port address ensures that the packet is
+		//targeted for the tcpd on the destination machine
+		//rather than for the server itself
 		forward_addr.sin_port = htons(12345);
+		incoming_pkt->seq_no = current_seq_no % MAX_SEQ_NUM;
+		current_seq_no = (current_seq_no + 1) % MAX_SEQ_NUM;
+		fprintf(stderr, "Sending pkt number(%d)\n", incoming_pkt->seq_no);
 		forward_message(sock, (struct sockaddr *)&forward_addr,
-					temp_buf, sizeof(trans_pkt_t), 0);
+				temp_buf, sizeof(trans_pkt_t), 0);
+		
+		// while ack isn't received resend packet
+		//while (ack_not_received) {
+		//    wait_for_ack(round_trip_time);
+		//}
 		break;
 	    case PKT_TYPE_SEND_FTP2TCPD:
 		fprintf(stderr, "Send request packet from FTP has arrived at TCPD\n");
 		memcpy(&forward_addr, &(incoming_pkt->addr), sizeof(struct sockaddr));
+		//changing the port address ensures that the packet is
+		//targeted for the tcpd on the destination machine
+		//rather than for the server itself
 		forward_addr.sin_port = htons(12345);
-		if (incoming_pkt->len == 128) {
-		    char temp_name[128];
-		    //int temp_size;
-		    memcpy(temp_name, incoming_pkt->payload, 128);
-		    fprintf(stderr, "seq num %d\n", incoming_pkt->seq_no);
-		    //memcpy(&temp_size, (void *)((char *)&(incoming_pkt->payload) + 256), sizeof(int));
-		    fprintf(stderr, "switch tcpd (%s)\n", temp_name);
-		}
-		if (incoming_pkt->len == 4) {
-		    int temp_size;
-		    fprintf(stderr, "seq num %d\n", incoming_pkt->seq_no);
-		    memcpy(&temp_size, (void *)((char *)incoming_pkt->payload), sizeof(int));
-		    fprintf(stderr, "switch tcpd (%d)\n", temp_size);
-		}
+		//if (0 && incoming_pkt->len == 128) {
+		//    char temp_name[128];
+		//    //int temp_size;
+		//    memcpy(temp_name, incoming_pkt->payload, 128);
+		//    fprintf(stderr, "seq num %d\n", incoming_pkt->seq_no);
+		//    //memcpy(&temp_size, (void *)((char *)&(incoming_pkt->payload) + 256), sizeof(int));
+		//    fprintf(stderr, "switch tcpd (%s)\n", temp_name);
+		//}
+		//if (0 && incoming_pkt->len == 4) {
+		//    int temp_size;
+		//    fprintf(stderr, "seq num %d\n", incoming_pkt->seq_no);
+		//    memcpy(&temp_size, (void *)((char *)incoming_pkt->payload), sizeof(int));
+		//    fprintf(stderr, "switch tcpd (%d)\n", temp_size);
+		//}
 		incoming_pkt->type = PKT_TYPE_SEND_TCPD2TCPD;
+		incoming_pkt->seq_no = current_seq_no % MAX_SEQ_NUM;
+		current_seq_no = (current_seq_no + 1) % MAX_SEQ_NUM;
+		fprintf(stderr, "Sending pkt number(%d)\n", incoming_pkt->seq_no);
 		forward_message(sock, (struct sockaddr *)&forward_addr,
 					temp_buf, sizeof(trans_pkt_t), 0);
 		break;
@@ -330,15 +381,35 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Connect request packet from TCPD has arrived at TCPD\n");
 		memcpy(&forward_addr, &(incoming_pkt->addr), sizeof(struct sockaddr));
 		incoming_pkt->type = PKT_TYPE_CONNECT_TCPD2FTP;
+		if (next_expected_seq_no == incoming_pkt->seq_no) {
+		    fprintf(stderr, "Received pkt %d as expected\n", incoming_pkt->seq_no);
+		}
+		else {
+		    fprintf(stderr, "Received pkt %d but expected %d\n", incoming_pkt->seq_no,
+			    next_expected_seq_no);
+		    exit(-1);
+		}
 		forward_message(sock, (struct sockaddr *)&forward_addr,
 					temp_buf, sizeof(trans_pkt_t), 0);
+		next_expected_seq_no = (next_expected_seq_no + 1) % MAX_SEQ_NUM;
 		break;
 	    case PKT_TYPE_SEND_TCPD2TCPD:
 		fprintf(stderr, "Send request packet from TCPD has arrived at TCPD\n");
 		memcpy(&forward_addr, &(incoming_pkt->addr), sizeof(struct sockaddr));
 		incoming_pkt->type = PKT_TYPE_SEND_TCPD2FTP;
+		if (next_expected_seq_no == incoming_pkt->seq_no) {
+		    fprintf(stderr, "Received pkt %d as expected\n", incoming_pkt->seq_no);
+		}
+		else {
+		    fprintf(stderr, "Received pkt %d but expected %d\n", incoming_pkt->seq_no,
+			    next_expected_seq_no);
+		    exit(-1);
+		}
 		forward_message(sock, (struct sockaddr *)&forward_addr,
 					temp_buf, sizeof(trans_pkt_t), 0);
+		next_expected_seq_no = (next_expected_seq_no + 1) % MAX_SEQ_NUM;
+		break;
+	    case PKT_TYPE_TIMEOUT_TIMER2TCPD:
 		break;
 //	    case PKT_TYPE_CONNECT_TCPD2FTP:
 //		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
@@ -349,6 +420,10 @@ int main(int argc, char **argv)
 	    default:
 		fprintf(stderr, "unexpected packet at tcpd\n");
 		break;
+	    }
+	    // need to release buffers to pool after use
+	    if (NULL != temp_buf) {
+	    	free(temp_buf);
 	    }
 	}
 	else {
