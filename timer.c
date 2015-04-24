@@ -34,6 +34,7 @@ int init_delta_list()
     delta_list_tail_free = &ref[DELTA_LENGTH - 1];
     delta_list_head_used = NULL;
     delta_list_tail_used = NULL;
+    return 0;
 }
 
 int add_node(int seq_no, int timeout_duration)
@@ -85,7 +86,7 @@ int add_node(int seq_no, int timeout_duration)
 	ref2 = delta_list_head_used;
 	time_elapsed = (now.tv_usec - (ref2->start_time).tv_usec)
 	    + (1000000 * (now.tv_sec - (ref2->start_time).tv_sec));
-	time_elapsed = 0;
+	//time_elapsed = 0;
 	sum = 0 - time_elapsed;
 	do {
 	    sum += ref2->timeout_duration;
@@ -133,6 +134,7 @@ int add_node(int seq_no, int timeout_duration)
     used_list_count++;
     free_list_count--;
     fprintf(stderr, "Used = %d, Free = %d\n", used_list_count, free_list_count);
+    return 0;
 }
 
 int free_node(int seq_no)
@@ -141,6 +143,9 @@ int free_node(int seq_no)
     timeout_node_t *ref;
     timeout_node_t *ref_prev;
     timeout_node_t *ref_next;
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    int time_elapsed = 0;
     
     ref = delta_list_head_used;
     
@@ -172,6 +177,11 @@ int free_node(int seq_no)
 		    // head node being removed
 		    ref_next->prev = NULL;
 		    delta_list_head_used = ref_next;
+		    time_elapsed = now.tv_usec - (ref->start_time).tv_usec;
+		    time_elapsed += (1000000 * (now.tv_sec - (ref->start_time).tv_sec));
+		    if ((ref->timeout_duration - time_elapsed) <= 0) {
+			ref_next->timeout_duration += (ref->timeout_duration - time_elapsed);
+		    }
 		}
 		else if (NULL == ref_prev && NULL == ref_next) {
 		    // this would happen if ref is the last element in used list
@@ -241,6 +251,7 @@ int free_node(int seq_no)
     else {
 	fprintf(stderr, "node not found\n");
     }
+    return 0;
 }
 
 int print_lists()
@@ -258,7 +269,31 @@ int print_lists()
 	fprintf(stderr, "%d, (%d, %d, %d)\n", i++, ref->index, ref->seq_no, ref->timeout_duration);
 	ref = ref->next;
     }
+    return 0;
 }
+
+int check_timeout_completions()
+{
+    struct timeval now;
+    timeout_node_t *ref = delta_list_head_used;
+    int time_elapsed = 0;
+    gettimeofday(&now, NULL);
+    int seq_no = -1;
+    if (ref != NULL) {
+	time_elapsed = now.tv_usec - (ref->start_time).tv_usec;
+	time_elapsed += (1000000 * (now.tv_sec - (ref->start_time).tv_sec));
+	fprintf(stderr, "examining (%d, %d)\n", ref->seq_no, ref->timeout_duration);
+	if ((ref->timeout_duration - time_elapsed) <= 0) {
+	    // timeout has occured
+	    seq_no = ref->seq_no;
+	    free_node(ref->seq_no);
+	    fprintf(stderr, "timedout seq no = %d\n", seq_no);
+	    //delta_list_head_used = ref->next;
+	}
+    }
+    return seq_no;
+}
+
 ssize_t send_message(int sock, struct sockaddr *addr, const void *buf,
 			size_t len, int flags)
 {
@@ -448,7 +483,7 @@ int main(int argc, char **argv)
     setup_lb_addr(SOCK_TYPE_DGRAM, NULL, lb_port_num_str, &lb_addr);
     lb_sock = get_timer_sock(lb_addr);
     
-    tv.tv_sec = 200000;
+    tv.tv_sec = 2;
     tv.tv_usec = 2;
 
     while(1) {
@@ -488,12 +523,12 @@ int main(int argc, char **argv)
 		print_lists();
 	    }
 	    else if (0 == strcmp(msg, "l")) {
-		struct sockaddr temp_addr;
-		struct sockaddr_in *temp_addr_in;
+		//struct sockaddr temp_addr;
+		//struct sockaddr_in *temp_addr_in;
 		char *temp_buf = NULL;
-		int rlen;
+		//int rlen;
 		trans_pkt_t *incoming_pkt;
-		struct sockaddr_in forward_addr;
+		//struct sockaddr_in forward_addr;
 		temp_buf = (char *) malloc(sizeof(trans_pkt_t));
 		incoming_pkt = (trans_pkt_t *) temp_buf;
 		incoming_pkt->type = PKT_TYPE_LOOPBACK_TIMER2TIMER;
@@ -507,7 +542,7 @@ int main(int argc, char **argv)
 	    char *temp_buf = NULL;
 	    int rlen;
 	    trans_pkt_t *incoming_pkt;
-	    struct sockaddr_in forward_addr;
+	    //struct sockaddr_in forward_addr;
 	    int *temp_int;
 	    int seq_no;
 	    int timeout_duration;
@@ -530,14 +565,16 @@ int main(int argc, char **argv)
 		temp_int = (int *)incoming_pkt->payload;
 		seq_no = temp_int[0];
 		timeout_duration = temp_int[1]; // in microsecs?
-		// add_node();
+		fprintf(stderr, "Message from tcpd to add timer (%d, %d)\n",
+			seq_no, timeout_duration);
+		add_node(seq_no, timeout_duration);
 		break;
 	    case PKT_TYPE_DELNODE_TCPD2TIMER:
 		// Request to cancel timer for a packet
 		// parse payload (seq_no)
 		temp_int = (int *)incoming_pkt->payload;
 		seq_no = temp_int[0];
-		// free_node();
+		free_node(seq_no);
 		break;
 	    default:
 		fprintf(stderr, "unexpected packet at tcpd\n");
@@ -550,14 +587,14 @@ int main(int argc, char **argv)
 	}
 	else if (FD_ISSET(lb_sock, readfds)) {
 	    struct sockaddr temp_addr;
-	    struct sockaddr_in *temp_addr_in;
+	    //struct sockaddr_in *temp_addr_in;
 	    char *temp_buf = NULL;
 	    int rlen;
 	    trans_pkt_t *incoming_pkt;
-	    struct sockaddr_in forward_addr;
-	    int *temp_int;
-	    int seq_no;
-	    int timeout_len;
+	    //struct sockaddr_in forward_addr;
+	    //int *temp_int;
+	    //int seq_no;
+	    //int timeout_len;
 	    temp_buf = (char *) malloc(sizeof(trans_pkt_t));
 	    rlen = recv_message(lb_sock, temp_buf, sizeof(trans_pkt_t), 0, &temp_addr);
 	    incoming_pkt = (trans_pkt_t *) temp_buf;
@@ -566,7 +603,31 @@ int main(int argc, char **argv)
 	    }
 	}
 	else {
-	    fprintf(stderr, "Time out\n");
+	    int temp_seq = -1;
+	    do {
+		char *temp_buf = NULL;
+		//int rlen;
+		trans_pkt_t *incoming_pkt;
+		struct sockaddr_in forward_addr;
+		memcpy(&forward_addr, &(tcpd_addr), sizeof(struct sockaddr));
+		forward_addr.sin_port = htons(12322);
+		temp_buf = (char *) malloc(sizeof(trans_pkt_t));
+		incoming_pkt = (trans_pkt_t *) temp_buf;
+		incoming_pkt->type = PKT_TYPE_TIMEOUT_TIMER2TCPD;
+		fprintf(stderr, "Time out\n");
+		// poll every 1ms to see if there's any work pending
+		tv.tv_sec = 1;
+		tv.tv_usec = 1000;
+		temp_seq = check_timeout_completions();
+		if (-1 != temp_seq) {
+		    fprintf(stderr, "sending timeout warning to tcpd for seq_no = %d\n", temp_seq);
+		    memcpy(incoming_pkt->payload, &temp_seq, sizeof(int));
+		    send_message(timer_sock, (struct sockaddr *)&forward_addr,
+				 temp_buf, sizeof(trans_pkt_t), 0);
+		}
+		free(temp_buf);
+	    } while(-1 != temp_seq);
+	    //print_lists();
 	}
     }
 

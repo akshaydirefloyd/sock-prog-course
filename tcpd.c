@@ -243,9 +243,17 @@ int main(int argc, char **argv)
 {
     struct timeval tv;
     int sock = -1;
-    fd_set readfds[2];
+    int recv_sock = -1;
+    int timer_sock = -1;
+    fd_set readfds[4];
     char msg[1024];
     struct addrinfo *tcpd_addr;
+    struct addrinfo *tcpd_addr_recv;
+    struct addrinfo *timer_addrinfo;
+    struct sockaddr *timer_addr;
+    char timer_port_num_str[128];
+    char timer_port_num_str_recv[128];
+    char port_num_str_recv[128];
     char *port_num_str;
 
     // Check if arguments passed are correct
@@ -255,25 +263,36 @@ int main(int argc, char **argv)
     }
     else {
 	port_num_str = argv[1];
+	sprintf(port_num_str_recv, "%d", 12346);
+	sprintf(timer_port_num_str, "%d", 12321);
+	sprintf(timer_port_num_str_recv, "%d", 12322);
     }
 
     setup_tcpd_addr(SOCK_TYPE_DGRAM, NULL, port_num_str, &tcpd_addr);
     //setup_tcpd_buffers();
     sock = get_tcpd_sock(tcpd_addr);
+
+    setup_tcpd_addr(SOCK_TYPE_DGRAM, NULL, port_num_str_recv, &tcpd_addr_recv);
+    //setup_tcpd_buffers();
+    recv_sock = get_tcpd_sock(tcpd_addr_recv);
     
-    tv.tv_sec = 400000;
+    
+    get_addr(SOCK_TYPE_DGRAM, NULL, timer_port_num_str, &timer_addrinfo);
+    timer_addr = (struct sockaddr *) timer_addrinfo->ai_addr;
+    
+    get_addr(SOCK_TYPE_DGRAM, NULL, timer_port_num_str_recv, &timer_addrinfo);
+    timer_sock = get_tcpd_sock(timer_addrinfo);
+    
+    tv.tv_sec = 40;
     tv.tv_usec = 0;
 
     while(1) {
 	FD_ZERO(readfds);
 	FD_SET(STDIN, readfds);
 	FD_SET(sock, readfds);
-	if (sock > STDIN) {
-	    select(sock + 1, readfds, NULL, NULL, &tv);
-	}
-	else {
-	    select(STDIN + 1, readfds, NULL, NULL, &tv);
-	}
+	FD_SET(recv_sock, readfds);
+	FD_SET(timer_sock, readfds);
+	select(timer_sock + 1, readfds, NULL, NULL, &tv);
 
 	if (FD_ISSET(STDIN, readfds)) {
 	    fprintf(stderr, "key pressed\n");
@@ -315,13 +334,20 @@ int main(int argc, char **argv)
 		break;
 	    }
 	}
-	else if (FD_ISSET(sock, readfds)) {
+	if (FD_ISSET(sock, readfds)) {
 	    struct sockaddr temp_addr;
 	    char *temp_buf = NULL;
 	    int rlen;
 	    trans_pkt_t *incoming_pkt;
+	    trans_pkt_t temp_pkt;
+	    trans_pkt_t ack_pkt;
+	    trans_pkt_t *timer_pkt = &temp_pkt;
+	    int timeout_seq = -1;
+	    int temp_int;
+	    int rtt = 1000;
 	    //int buffer_index;
 	    struct sockaddr_in forward_addr;
+	    struct sockaddr_in ack_addr;
 	    temp_buf = (char *) malloc(sizeof(trans_pkt_t));
 	    //buffer_index = get_free_buffer_index();
 	    //temp_buf = &(buffer_pkt_pool[buffer_index]);
@@ -338,12 +364,16 @@ int main(int argc, char **argv)
 		//targeted for the tcpd on the destination machine
 		//rather than for the server itself
 		forward_addr.sin_port = htons(12345);
-		incoming_pkt->seq_no = current_seq_no % MAX_SEQ_NUM;
+		incoming_pkt->seq_no = current_seq_no;
+		timer_pkt->type = PKT_TYPE_ADDNODE_TCPD2TIMER;
+		memcpy(timer_pkt->payload, &current_seq_no, sizeof(int));
+		memcpy((void *)((char *)timer_pkt->payload + sizeof(int)), &rtt, sizeof(int));
 		current_seq_no = (current_seq_no + 1) % MAX_SEQ_NUM;
 		fprintf(stderr, "Sending pkt number(%d)\n", incoming_pkt->seq_no);
 		forward_message(sock, (struct sockaddr *)&forward_addr,
 				temp_buf, sizeof(trans_pkt_t), 0);
-		
+		forward_message(sock, (struct sockaddr *)timer_addr,
+				timer_pkt, sizeof(trans_pkt_t), 0);
 		// while ack isn't received resend packet
 		//while (ack_not_received) {
 		//    wait_for_ack(round_trip_time);
@@ -371,11 +401,16 @@ int main(int argc, char **argv)
 		//    fprintf(stderr, "switch tcpd (%d)\n", temp_size);
 		//}
 		incoming_pkt->type = PKT_TYPE_SEND_TCPD2TCPD;
-		incoming_pkt->seq_no = current_seq_no % MAX_SEQ_NUM;
+		incoming_pkt->seq_no = current_seq_no;
+		timer_pkt->type = PKT_TYPE_ADDNODE_TCPD2TIMER;
+		memcpy(timer_pkt->payload, &current_seq_no, sizeof(int));
+		memcpy((void *)((char *)timer_pkt->payload + sizeof(int)), &rtt, sizeof(int));
 		current_seq_no = (current_seq_no + 1) % MAX_SEQ_NUM;
 		fprintf(stderr, "Sending pkt number(%d)\n", incoming_pkt->seq_no);
 		forward_message(sock, (struct sockaddr *)&forward_addr,
 					temp_buf, sizeof(trans_pkt_t), 0);
+		forward_message(sock, (struct sockaddr *)timer_addr,
+				timer_pkt, sizeof(trans_pkt_t), 0);
 		break;
 	    case PKT_TYPE_CONNECT_TCPD2TCPD:
 		fprintf(stderr, "Connect request packet from TCPD has arrived at TCPD\n");
@@ -383,6 +418,14 @@ int main(int argc, char **argv)
 		incoming_pkt->type = PKT_TYPE_CONNECT_TCPD2FTP;
 		if (next_expected_seq_no == incoming_pkt->seq_no) {
 		    fprintf(stderr, "Received pkt %d as expected\n", incoming_pkt->seq_no);
+		    // send out ack
+		    ack_pkt.type = PKT_TYPE_ACK_TCPD2TCPD;
+		    temp_int = next_expected_seq_no + 1;
+		    memcpy(ack_pkt.payload, &temp_int, sizeof(int));
+		    memcpy(&ack_addr, &temp_addr, sizeof(struct sockaddr));
+		    ack_addr.sin_port = htons(12346);
+		    forward_message(sock, (struct sockaddr *)&ack_addr,
+				    &ack_pkt, sizeof(trans_pkt_t), 0);
 		}
 		else {
 		    fprintf(stderr, "Received pkt %d but expected %d\n", incoming_pkt->seq_no,
@@ -399,6 +442,14 @@ int main(int argc, char **argv)
 		incoming_pkt->type = PKT_TYPE_SEND_TCPD2FTP;
 		if (next_expected_seq_no == incoming_pkt->seq_no) {
 		    fprintf(stderr, "Received pkt %d as expected\n", incoming_pkt->seq_no);
+		    // send out ack
+		    ack_pkt.type = PKT_TYPE_ACK_TCPD2TCPD;
+		    temp_int = next_expected_seq_no + 1;
+		    memcpy(ack_pkt.payload, &temp_int, sizeof(int));
+		    memcpy(&ack_addr, &temp_addr, sizeof(struct sockaddr));
+		    ack_addr.sin_port = htons(12346);
+		    forward_message(sock, (struct sockaddr *)&ack_addr,
+				    &ack_pkt, sizeof(trans_pkt_t), 0);
 		}
 		else {
 		    fprintf(stderr, "Received pkt %d but expected %d\n", incoming_pkt->seq_no,
@@ -410,6 +461,8 @@ int main(int argc, char **argv)
 		next_expected_seq_no = (next_expected_seq_no + 1) % MAX_SEQ_NUM;
 		break;
 	    case PKT_TYPE_TIMEOUT_TIMER2TCPD:
+		memcpy(&timeout_seq, (incoming_pkt->payload), sizeof(int));
+		fprintf(stderr, "timedout seq num %d - need to resend\n", timeout_seq);
 		break;
 //	    case PKT_TYPE_CONNECT_TCPD2FTP:
 //		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
@@ -418,7 +471,80 @@ int main(int argc, char **argv)
 //		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
 //		break;
 	    default:
-		fprintf(stderr, "unexpected packet at tcpd\n");
+		fprintf(stderr, "unexpected packet at tcpd sock\n");
+		break;
+	    }
+	    // need to release buffers to pool after use
+	    if (NULL != temp_buf) {
+	    	free(temp_buf);
+	    }
+	}
+	if (FD_ISSET(recv_sock, readfds)) {
+	    struct sockaddr temp_addr;
+	    char *temp_buf = NULL;
+	    int rlen;
+	    trans_pkt_t *incoming_pkt;
+	    trans_pkt_t ack_pkt;
+	    //int timeout_seq = -1;
+	    int temp_int;
+	    //int rtt = 1000;
+	    //int buffer_index;
+	    //struct sockaddr_in forward_addr;
+	    //buffer_index = get_free_buffer_index();
+	    //temp_buf = &(buffer_pkt_pool[buffer_index]);
+	    rlen = recv_message(recv_sock, &ack_pkt, sizeof(trans_pkt_t), 0, &temp_addr);
+	    //fprintf(stderr, "recved %d bytes = %s\n", rlen, temp_buf);
+	    incoming_pkt = (trans_pkt_t *) &ack_pkt;
+	    switch(incoming_pkt->type) {
+	    case PKT_TYPE_ACK_TCPD2TCPD:
+		memcpy(&temp_int, incoming_pkt->payload, sizeof(int));
+		fprintf(stderr, "Ack packet (for seq = %d) from TCPD has arrived\n", temp_int);
+		break;
+//	    case PKT_TYPE_CONNECT_TCPD2FTP:
+//		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
+//		break;
+//	    case PKT_TYPE_SEND_TCPD2FTP:
+//		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
+//		break;
+	    default:
+		fprintf(stderr, "unexpected packet at tcpd recv sock\n");
+		break;
+	    }
+	    // need to release buffers to pool after use
+	    if (NULL != temp_buf) {
+	    	free(temp_buf);
+	    }
+	}
+	if (FD_ISSET(timer_sock, readfds)) {
+	    struct sockaddr temp_addr;
+	    char *temp_buf = NULL;
+	    int rlen;
+	    trans_pkt_t *incoming_pkt;
+	    //trans_pkt_t temp_pkt;
+	    //trans_pkt_t *timer_pkt = &temp_pkt;
+	    int timeout_seq = -1;
+	    //int rtt = 1000;
+	    //int buffer_index;
+	    //struct sockaddr_in forward_addr;
+	    temp_buf = (char *) malloc(sizeof(trans_pkt_t));
+	    //buffer_index = get_free_buffer_index();
+	    //temp_buf = &(buffer_pkt_pool[buffer_index]);
+	    rlen = recv_message(timer_sock, temp_buf, sizeof(trans_pkt_t), 0, &temp_addr);
+	    //fprintf(stderr, "recved %d bytes = %s\n", rlen, temp_buf);
+	    incoming_pkt = (trans_pkt_t *) temp_buf;
+	    switch(incoming_pkt->type) {
+	    case PKT_TYPE_TIMEOUT_TIMER2TCPD:
+		memcpy(&timeout_seq, (incoming_pkt->payload), sizeof(int));
+		fprintf(stderr, "timedout seq num %d - need to resend\n", timeout_seq);
+		break;
+//	    case PKT_TYPE_CONNECT_TCPD2FTP:
+//		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
+//		break;
+//	    case PKT_TYPE_SEND_TCPD2FTP:
+//		fprintf(stderr, "Connect request packet from TCPD has arrived at FTP\n");
+//		break;
+	    default:
+		fprintf(stderr, "unexpected packet at tcpd timer sock\n");
 		break;
 	    }
 	    // need to release buffers to pool after use
@@ -428,6 +554,8 @@ int main(int argc, char **argv)
 	}
 	else {
 	    fprintf(stderr, "Time out\n");
+	    tv.tv_sec = 40;
+	    tv.tv_usec = 0;
 	}
     }
 

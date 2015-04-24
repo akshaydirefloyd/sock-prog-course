@@ -132,6 +132,7 @@ int CONNECT(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
 ssize_t SEND(int sockfd, const void *buf, size_t len, int flags)
 {
+    sleep(1);
     if (0 == use_tcpd) {
 	return send(sockfd, buf, len, flags);
     }

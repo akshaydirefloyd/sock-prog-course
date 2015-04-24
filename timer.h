@@ -26,6 +26,7 @@
 #define PKT_TYPE_DELNODE_TCPD2TIMER 8
 #define PKT_TYPE_TIMEOUT_TIMER2TCPD 9
 #define PKT_TYPE_LOOPBACK_TIMER2TIMER 10
+#define PKT_TYPE_ACK_TCPD2TCPD 11
 #define DELTA_LENGTH 64 // Doesn't have to be greater than window size
 
 struct addrinfo	*res = NULL;
